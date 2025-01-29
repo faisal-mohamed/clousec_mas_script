@@ -8,18 +8,17 @@ const { CloudTrailClient, DeleteTrailCommand } = require("@aws-sdk/client-cloudt
 const { CodeBuildClient, DeleteProjectCommand } = require("@aws-sdk/client-codebuild");
 const { DatabaseMigrationServiceClient, DeleteReplicationInstanceCommand } = require("@aws-sdk/client-database-migration-service");
 const { DynamoDBClient, DeleteTableCommand } = require("@aws-sdk/client-dynamodb");
-const { EC2Client, TerminateInstancesCommand, DeleteVolumeCommand } = require("@aws-sdk/client-ec2");
-const { ECSClient, DeleteClusterCommand: DeleteECSClusterCommand } = require("@aws-sdk/client-ecs");
+const { EC2Client, TerminateInstancesCommand, DeleteVolumeCommand, DeleteSecurityGroupCommand } = require("@aws-sdk/client-ec2");
+const { ECSClient, DeleteClusterCommand } = require("@aws-sdk/client-ecs");
 const { EFSClient, DeleteFileSystemCommand } = require("@aws-sdk/client-efs");
-//const { ElasticsearchServiceClient, DeleteElasticsearchDomainCommand } = require("@aws-sdk/client-elasticsearch-service");
 const { EMRClient, TerminateJobFlowsCommand } = require("@aws-sdk/client-emr");
 const { IAMClient, DeleteRoleCommand } = require("@aws-sdk/client-iam");
 const { KMSClient, ScheduleKeyDeletionCommand } = require("@aws-sdk/client-kms");
 const { LambdaClient, DeleteFunctionCommand } = require("@aws-sdk/client-lambda");
-const { OpenSearchClient, DeleteDomainCommand: DeleteOpenSearchDomainCommand } = require("@aws-sdk/client-opensearch");
+const { OpenSearchClient, DeleteDomainCommand } = require("@aws-sdk/client-opensearch");
 const { RDSClient, DeleteDBInstanceCommand } = require("@aws-sdk/client-rds");
 const { RedshiftClient, DeleteClusterCommand: DeleteRedshiftClusterCommand } = require("@aws-sdk/client-redshift");
-const { S3Client, DeleteObjectsCommand, DeleteBucketCommand, ListObjectsV2Command } = require("@aws-sdk/client-s3");
+const { S3Client, DeleteBucketCommand, DeleteObjectCommand, ListObjectsV2Command } = require("@aws-sdk/client-s3");
 const { SageMakerClient, DeleteEndpointCommand } = require("@aws-sdk/client-sagemaker");
 const { SecretsManagerClient, DeleteSecretCommand } = require("@aws-sdk/client-secrets-manager");
 const { SNSClient, DeleteTopicCommand } = require("@aws-sdk/client-sns");
@@ -53,7 +52,6 @@ const clients = {
     ec2: new EC2Client(config),
     ecs: new ECSClient(config),
     efs: new EFSClient(config),
-    //elasticsearch: new ElasticsearchServiceClient(config),
     emr: new EMRClient(config),
     iam: new IAMClient(config),
     kms: new KMSClient(config),
@@ -72,7 +70,18 @@ const clients = {
 // Utility function for delays
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-// Resource deletion functions
+async function deleteEC2SecurityGroup(groupId) {
+    try {
+        await clients.ec2.send(new DeleteSecurityGroupCommand({
+            GroupId: groupId
+        }));
+        console.log(`Deleted EC2 Security Group: ${groupId}`);
+    } catch (error) {
+        console.error(`Error deleting EC2 Security Group: ${error}`);
+        throw error;
+    }
+}
+
 async function deleteACMCertificate(certificateArn) {
     try {
         await clients.acm.send(new DeleteCertificateCommand({
@@ -195,9 +204,6 @@ async function deleteEBSVolume(volumeId) {
     }
 }
 
-
-
-
 async function deleteEC2Instance(instanceId) {
     try {
         await clients.ec2.send(new TerminateInstancesCommand({
@@ -212,7 +218,7 @@ async function deleteEC2Instance(instanceId) {
 
 async function deleteECSCluster(clusterArn) {
     try {
-        await clients.ecs.send(new DeleteECSClusterCommand({
+        await clients.ecs.send(new DeleteClusterCommand({
             cluster: clusterArn
         }));
         console.log(`Deleted ECS cluster: ${clusterArn}`);
@@ -233,18 +239,6 @@ async function deleteEFS(fileSystemId) {
         throw error;
     }
 }
-
-// async function deleteElasticsearchDomain(domainName) {
-//     try {
-//         await clients.elasticsearch.send(new DeleteElasticsearchDomainCommand({
-//             DomainName: domainName
-//         }));
-//         console.log(`Deleted Elasticsearch domain: ${domainName}`);
-//     } catch (error) {
-//         console.error(`Error deleting Elasticsearch domain: ${error}`);
-//         throw error;
-//     }
-// }
 
 async function deleteEMRCluster(clusterId) {
     try {
@@ -297,26 +291,12 @@ async function deleteLambdaFunction(functionName) {
 
 async function deleteOpenSearchDomain(domainName) {
     try {
-        await clients.opensearch.send(new DeleteOpenSearchDomainCommand({
+        await clients.opensearch.send(new DeleteDomainCommand({
             DomainName: domainName
         }));
         console.log(`Deleted OpenSearch domain: ${domainName}`);
     } catch (error) {
         console.error(`Error deleting OpenSearch domain: ${error}`);
-        throw error;
-    }
-}
-
-async function deleteRDSInstance(dbInstanceIdentifier) {
-    try {
-        await clients.rds.send(new DeleteDBInstanceCommand({
-            DBInstanceIdentifier: dbInstanceIdentifier,
-            SkipFinalSnapshot: true,
-            DeleteAutomatedBackups: true
-        }));
-        console.log(`Deleted RDS instance: ${dbInstanceIdentifier}`);
-    } catch (error) {
-        console.error(`Error deleting RDS instance: ${error}`);
         throw error;
     }
 }
@@ -427,12 +407,44 @@ async function deleteWAFv2WebACL(webAclId, scope) {
     }
 }
 
+async function deleteRDSInstance(dbInstanceIdentifier) {
+    try {
+        // Extract just the instance identifier from the full ARN path if needed
+        const instanceId = dbInstanceIdentifier.split(':').pop().split('/').pop();
+        await clients.rds.send(new DeleteDBInstanceCommand({
+            DBInstanceIdentifier: instanceId,
+            SkipFinalSnapshot: true,
+            DeleteAutomatedBackups: true
+        }));
+        console.log(`Deleted RDS instance: ${instanceId}`);
+    } catch (error) {
+        console.error(`Error deleting RDS instance: ${error}`);
+        throw error;
+    }
+}
+
 async function deleteResource(arn) {
     const [, , service, , ...rest] = arn.split(':');
     const resourceId = rest.join(':').split('/').pop();
 
     try {
         switch (service) {
+            case 'ec2':
+                if (arn.includes('security-group')) {
+                    await deleteEC2SecurityGroup(resourceId);
+                } else if (arn.includes('volume')) {
+                    await deleteEBSVolume(resourceId);
+                } else {
+                    await deleteEC2Instance(resourceId);
+                }
+                break;
+            case 'rds':
+                if (arn.includes(':snapshot:')) {
+                    console.log(`Skipping RDS snapshot deletion: ${arn}`);
+                } else {
+                    await deleteRDSInstance(arn);
+                }
+                break;
             case 'acm':
                 await deleteACMCertificate(arn);
                 break;
@@ -460,22 +472,12 @@ async function deleteResource(arn) {
             case 'dynamodb':
                 await deleteDynamoDBTable(resourceId);
                 break;
-            case 'ec2':
-                if (arn.includes('volume')) {
-                    await deleteEBSVolume(resourceId);
-                } else {
-                    await deleteEC2Instance(resourceId);
-                }
-                break;
             case 'ecs':
                 await deleteECSCluster(resourceId);
                 break;
             case 'elasticfilesystem':
                 await deleteEFS(resourceId);
                 break;
-            case 'es':
-                // await deleteElasticsearchDomain(resourceId);
-                // break;
             case 'elasticmapreduce':
                 await deleteEMRCluster(resourceId);
                 break;
@@ -490,9 +492,6 @@ async function deleteResource(arn) {
                 break;
             case 'opensearch':
                 await deleteOpenSearchDomain(resourceId);
-                break;
-            case 'rds':
-                await deleteRDSInstance(resourceId);
                 break;
             case 'redshift':
                 await deleteRedshiftCluster(resourceId);
@@ -561,7 +560,7 @@ async function deleteTaggedResources(tagKey) {
 
 // Main execution
 async function main() {
-    const tagKey = 'simulation-mas';
+    const tagKey = 'test_tag';
 
     try {
         await deleteTaggedResources(tagKey);
