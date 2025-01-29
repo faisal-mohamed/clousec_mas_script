@@ -560,7 +560,7 @@ async function deleteTaggedResources(tagKey) {
 
 // Main execution
 async function main() {
-    const tagKey = 'test_tag';
+    const tagKey = 'simulation-mas';
 
     try {
         await deleteTaggedResources(tagKey);
